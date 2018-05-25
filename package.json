@@ -1,5 +1,5 @@
 {
-  "name": "loopback-connector-mongodb",
+  "name": "loopback-connector-mongodb-mt",
   "version": "3.4.3",
   "description": "The official MongoDB connector for the LoopBack framework.",
   "engines": {
@@ -15,7 +15,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/strongloop/loopback-connector-mongodb.git"
+    "url": "git://github.com/strongloop/loopback-connector-mongodb-mt.git"
   },
   "keywords": [
     "connector",
