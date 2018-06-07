@@ -26,13 +26,19 @@ The entry in the application's `/server/datasources.json` will look like this:
   "host": "myserver",
   "port": 27017,
   "url":  "",
-  "database": "test",
-  "password": "mypassword",
+  "database": "admin",
+  "password": "user_password",
+  "tenant": "my_default_tenant",
+  "prefix": "tenant_prefix_",
   "name": "mydb",
-  "user": "me",
-  "connector": "mongodb-mt"  
+  "user": "user_with_root_role",
+  "connector": "mongodb-mt"
 }
 ```
+PS:
+  * User requires the root role in mongodb.
+  * Tenant is the default tenant to connect if AccessToken not constains a tenant.
+  * Prefix is the tenant prefix, this is concatenate with tenant like this: settings.prefix + settings.tenant.
 
 ## Change tenant
 
