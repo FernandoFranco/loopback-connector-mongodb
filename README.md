@@ -29,7 +29,7 @@ The entry in the application's `/server/datasources.json` will look like this:
   "database": "admin",
   "password": "user_password",
   "tenant": "my_default_tenant",
-  "prefix": "tenant_prefix_",
+  "tenantPrefix": "tenant_prefix_",
   "name": "mydb",
   "user": "user_with_root_role",
   "connector": "mongodb-mt"
@@ -38,9 +38,9 @@ The entry in the application's `/server/datasources.json` will look like this:
 PS:
   * User requires the root role in mongodb.
   * Tenant is the default tenant to connect if AccessToken not constains a tenant.
-  * Prefix is the tenant prefix, this is concatenate with tenant like this: settings.prefix + settings.tenant.
+  * TenantPrefix is the tenant prefix, this is concatenate with tenant like this: settings.tenantPrefix + settings.tenant.
 
 ## Change tenant
 
 Tenant changes with AccessToken custom attribute named "tenant".
-When user request with accesss 
+When user request with accesss.
