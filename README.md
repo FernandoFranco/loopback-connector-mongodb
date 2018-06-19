@@ -42,5 +42,33 @@ PS:
 
 ## Change tenant
 
-Tenant changes with AccessToken custom attribute named "tenant".
+Tenant changes with AccessToken custom attribute named `tenant`.
 When user request with accesss.
+
+## Model methods
+
+Use tenant with model methods require the AccessToken object in options of the method like this:
+
+```javascript
+Model.find({where:{}}, {accessToken}, (err, instances) => {
+  // ...
+});
+
+instance.save({accessToken}, (err) => {
+  // ...
+});
+```
+
+## Autoupdate and Automigrate
+
+Get the attribute connector of the datasource and call the method with AccessToken like:
+
+```javascript
+dataSource.connector.autoupdate(myModelName, {accessToken}, (err) => {
+  // ...
+});
+
+dataSource.connector.automigrate(myModelName, {accessToken}, (err) => {
+  // ...
+});
+```
