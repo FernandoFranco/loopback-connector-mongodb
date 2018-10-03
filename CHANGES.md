@@ -1,3 +1,59 @@
+2018-09-19, Version 3.8.0
+=========================
+
+ * fix performance issues on count #464 (Clément)
+
+ * feat: allow methods to pass strictObjectIDCoercion (virkt25)
+
+
+2018-09-14, Version 3.7.1
+=========================
+
+ * fix: map new names to old for connector hooks (virkt25)
+
+
+2018-09-12, Version 3.7.0
+=========================
+
+ * update deprecated mongo driver commands (Hugo Da Roit)
+
+ * Remove hard dependency of memwatch-next (Raymond Feng)
+
+ * Add support for protocol to be 'monogodb+srv' (Raymond Feng)
+
+
+2018-08-15, Version 3.6.0
+=========================
+
+ * docs: update with security consideration section (virkt25)
+
+ * fix: sanitize query by default (virkt25)
+
+ * change `count` to `countDocuments` (Rahmat Nugraha)
+
+ * add `useNewUrlParser` on validOptionNames (Rahmat Nugraha)
+
+ * Dedicated Model for testing disableDefaultSort (HugoPoi)
+
+ * Add disableDefaultSort in README (HugoPoi)
+
+ * Add settings disableDefaultSort for find method (HugoPoi)
+
+
+2018-07-23, Version 3.5.0
+=========================
+
+ * chore: drop node 4 and update deps (Taranveer Virk)
+
+ * [WebFM] cs/pl/ru translation (candytangnb)
+
+
+2018-06-05, Version 3.4.4
+=========================
+
+ * Fields projection fix (#436) (John Gonyo)
+
+
 2018-04-06, Version 3.4.3
 =========================
 
