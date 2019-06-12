@@ -1,19 +1,19 @@
-// Copyright IBM Corp. 2013,2016. All Rights Reserved.
+// Copyright IBM Corp. 2013,2019. All Rights Reserved.
 // Node module: loopback-connector-mongodb-mt
 // This file is licensed under the MIT License.
 // License text available at https://opensource.org/licenses/MIT
 
 'use strict';
 
-var g = require('strong-globalize')();
+const g = require('strong-globalize')();
 
-var DataSource = require('loopback-datasource-juggler').DataSource;
+const DataSource = require('loopback-datasource-juggler').DataSource;
 
-var config = require('rc')('loopback', {dev: {mongodb: {}}}).dev.mongodb;
+const config = require('rc')('loopback', {dev: {mongodb: {}}}).dev.mongodb;
 
-var ds = new DataSource(require('../'), config);
+const ds = new DataSource(require('../'), config);
 
-var Customer = ds.createModel('customer', {
+const Customer = ds.createModel('customer', {
   seq: {type: Number, id: true},
   name: String,
   emails: [{label: String, email: String}],

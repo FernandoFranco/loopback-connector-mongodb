@@ -1,3 +1,49 @@
+2019-05-04, Version 4.2.0
+=========================
+
+ * fix: edge cases to coerce nested decimal props (biniam)
+
+ * test: strict model update with mongo operators (biniam)
+
+ * chore: update copyrights years (Diana Lau)
+
+ * add check for embedded property type conversion (Dimitris)
+
+ * Remove port when using mongodb+srv (JREEVE)
+
+ * ci: fix previously failing tests (biniam)
+
+
+2019-04-12, Version 4.1.0
+=========================
+
+ * fix: coerce deep nested decimal properties (biniam)
+
+ * Fix missing '_id' when selected in filter.fields (#439) (Helge Willum Thingvad)
+
+
+2018-11-06, Version 4.0.0
+=========================
+
+ * Use new url parser by default (#462) (Hugo Da Roit)
+
+ * remove the infinite inspect (#480) (Janny)
+
+ * Add case insensitive indexes support (maxim.sharai)
+
+
+2018-10-23, Version 3.9.0
+=========================
+
+ * support decimal128 (#475) (Janny)
+
+ * Added `"authSource"` in doc connection properties (Rémi AUGUSTE)
+
+ * Convert embedded binary properties to buffer (ntsekouras)
+
+ * Convert projection fields option to object (Dimitris)
+
+
 2018-09-19, Version 3.8.0
 =========================
 

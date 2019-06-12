@@ -13,9 +13,13 @@ In your application root directory, enter this command to install the connector:
 npm install loopback-connector-mongodb-mt --save
 ```
 
+This installs the module from npm and adds it as a dependency to the application's `package.json` file.
+
+If you create a MongoDB data source using the data source generator as described below, you don't have to do this, since the generator will run `npm install` for you.
+
 ## Creating a MongoDB data source
 
-Use the [Data source generator](http://loopback.io/doc/en/lb3/Data-source-generator.html) to add a MongoDB data source to your application.  
+Use the [Data source generator](http://loopback.io/doc/en/lb3/Data-source-generator.html) to add a MongoDB data source to your application.
 The generator will prompt for the database server hostname, port, and other settings
 required to connect to a MongoDB database.  It will also run the `npm install` command above for you.
 
@@ -32,6 +36,7 @@ The entry in the application's `/server/datasources.json` will look like this:
   "tenantPrefix": "tenant_prefix_",
   "name": "mydb",
   "user": "user_with_root_role",
+  "authSource" : "admin",
   "connector": "mongodb-mt"
 }
 ```

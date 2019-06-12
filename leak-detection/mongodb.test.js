@@ -1,13 +1,13 @@
-// Copyright IBM Corp. 2015,2016. All Rights Reserved.
+// Copyright IBM Corp. 2015,2019. All Rights Reserved.
 // Node module: loopback-connector-mongodb-mt
 // This file is licensed under the MIT License.
 // License text available at https://opensource.org/licenses/MIT
 
 'use strict';
 
-var memwatch = require('memwatch-next');
-var sinon = require('sinon');
-var Todo = require('./fixtures/todo');
+const memwatch = require('memwatch-next');
+const sinon = require('sinon');
+const Todo = require('./fixtures/todo');
 
 describe('mongodb', function() {
   before(function() {
@@ -26,12 +26,12 @@ describe('mongodb', function() {
   }
 
   function execute(ctx, func, options, done) {
-    var hasOptions = true;
+    let hasOptions = true;
     if (typeof options === 'function') {
       done = options;
       hasOptions = false;
     }
-    var interval = setInterval(function() {
+    const interval = setInterval(function() {
       if (ctx.iterations >= global.ITERATIONS || ctx.spy.called) {
         ctx.spy.called.should.be.False();
         clearInterval(interval);

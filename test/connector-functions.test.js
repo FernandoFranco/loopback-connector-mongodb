@@ -1,4 +1,4 @@
-// Copyright IBM Corp. 2013,2016. All Rights Reserved.
+// Copyright IBM Corp. 2018,2019. All Rights Reserved.
 // Node module: loopback-connector-mongodb-mt
 // This file is licensed under the MIT License.
 // License text available at https://opensource.org/licenses/MIT
@@ -6,10 +6,10 @@
 'use strict';
 
 // This test written in mocha+should.js
-var should = require('./init.js');
+const should = require('./init.js');
 
 describe('connector function - findById', function() {
-  var db, TestAlias, sampleId;
+  let db, TestAlias, sampleId;
   before(function(done) {
     db = global.getDataSource();
     TestAlias = db.define('TestAlias', {foo: {type: String}});
