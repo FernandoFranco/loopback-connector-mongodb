@@ -1,4 +1,4 @@
-// Copyright IBM Corp. 2013,2016. All Rights Reserved.
+// Copyright IBM Corp. 2013,2020. All Rights Reserved.
 // Node module: loopback-connector-mongodb-mt
 // This file is licensed under the MIT License.
 // License text available at https://opensource.org/licenses/MIT
@@ -6,16 +6,16 @@
 'use strict';
 
 // This test written in mocha+should.js
-var semver = require('semver');
-var should = require('./init.js');
-var testUtils = require('../lib/test-utils');
-var async = require('async');
-var sinon = require('sinon');
-var sanitizeFilter = require('../lib/mongodb').sanitizeFilter;
+const semver = require('semver');
+const should = require('./init.js');
+const testUtils = require('../lib/test-utils');
+const async = require('async');
+const sinon = require('sinon');
+const sanitizeFilter = require('../lib/mongodb').sanitizeFilter;
 
-var GeoPoint = require('loopback-datasource-juggler').GeoPoint;
+const GeoPoint = require('loopback-datasource-juggler').GeoPoint;
 
-var Superhero,
+let Superhero,
   User,
   Post,
   Product,
@@ -28,16 +28,18 @@ var Superhero,
   UserWithRenamedColumns,
   PostWithStringIdAndRenamedColumns,
   Employee,
-  PostWithDisableDefaultSort;
+  PostWithDisableDefaultSort,
+  WithEmbeddedProperties,
+  WithEmbeddedBinaryProperties;
 
-describe('lazyConnect', function() {
+describe('connect', function() {
   it('should skip connect phase (lazyConnect = true)', function(done) {
-    var ds = global.getDataSource({
+    const ds = global.getDataSource({
       host: '127.0.0.1',
       port: 4,
       lazyConnect: true,
     });
-    var errTimeout = setTimeout(function() {
+    const errTimeout = setTimeout(function() {
       done();
     }, 2000);
 
@@ -48,20 +50,37 @@ describe('lazyConnect', function() {
   });
 
   it('should report connection error (lazyConnect = false)', function(done) {
-    var ds = global.getDataSource({
+    const ds = global.getDataSource({
       host: '127.0.0.1',
       port: 4,
       lazyConnect: false,
+      serverSelectionTimeoutMS: 1000,
     });
 
     ds.on('error', function(err) {
-      err.message.should.match(/failed to connect to server/);
+      should.exist(err);
+      err.name.should.equalOneOf('MongoServerSelectionError', 'MongoNetworkError', 'MongoTimeoutError');
+      err.message.should.match(/connect ECONNREFUSED/);
+      done();
+    });
+  });
+
+  it('should report url parsing error', function(done) {
+    const ds = global.getDataSource({
+      url: 'mongodb://xyz:@127.0.0.1:4/xyz_dev_db',
+      serverSelectionTimeoutMS: 1000,
+    });
+
+    ds.on('error', function(err) {
+      should.exist(err);
+      err.name.should.equalOneOf('MongoServerSelectionError', 'MongoNetworkError', 'MongoTimeoutError');
+      err.message.should.match(/connect ECONNREFUSED/);
       done();
     });
   });
 
   it('should connect on execute (lazyConnect = true)', function(done) {
-    var ds = global.getDataSource({
+    const ds = global.getDataSource({
       host: '127.0.0.1',
       port: global.config.port,
       lazyConnect: true,
@@ -81,12 +100,12 @@ describe('lazyConnect', function() {
         } else {
           done();
         }
-      }
+      },
     );
   });
 
   it('should reconnect on execute when disconnected (lazyConnect = true)', function(done) {
-    var ds = global.getDataSource({
+    const ds = global.getDataSource({
       host: '127.0.0.1',
       port: global.config.port,
       lazyConnect: true,
@@ -103,23 +122,27 @@ describe('lazyConnect', function() {
       'insertOne',
       {value: 'test value'},
       function(err, success) {
-        if (err) done(err);
-        var id = success.insertedId;
+        if (err) return done(err);
+        const id = success.insertedId;
         ds.connector.should.have.property('db');
         ds.connector.db.should.have.property('topology');
         ds.connector.db.topology.should.have.property('isDestroyed');
         ds.connector.db.topology.isDestroyed().should.be.False();
-        ds.connector.disconnect();
-        ds.connector.db.topology.isDestroyed().should.be.True();
-        ds.connector.execute('TestLazy', 'findOne', {_id: id}, function(
-          err,
-          data
-        ) {
-          if (err) done(err);
-          ds.connector.db.topology.isDestroyed().should.be.False();
-          done();
+        ds.connector.disconnect(function(err) {
+          if (err) return done(err);
+          // [NOTE] isDestroyed() is not implemented by NativeTopology
+          // When useUnifiedTopology is true
+          // ds.connector.db.topology.isDestroyed().should.be.True();
+          ds.connector.execute('TestLazy', 'findOne', {_id: id}, function(
+            err,
+            data,
+          ) {
+            if (err) return done(err);
+            // ds.connector.db.topology.isDestroyed().should.be.False();
+            done();
+          });
         });
-      }
+      },
     );
   });
 });
@@ -145,7 +168,7 @@ describe('mongodb connector', function() {
           age_index: {age: -1}, // The value itself is for keys
           /* eslint-enable camelcase */
         },
-      }
+      },
     );
 
     UserWithRenamedColumns = db.define(
@@ -165,7 +188,7 @@ describe('mongodb connector', function() {
         mongodb: {
           collection: 'User', // Overlay on the User collection
         },
-      }
+      },
     );
 
     Superhero = db.define(
@@ -193,7 +216,7 @@ describe('mongodb connector', function() {
             'location.geometry': '2dsphere',
           },
         },
-      }
+      },
     );
 
     Post = db.define(
@@ -208,7 +231,7 @@ describe('mongodb connector', function() {
           collection: 'PostCollection', // Customize the collection name
         },
         forceId: false,
-      }
+      },
     );
 
     Product = db.define(
@@ -224,7 +247,7 @@ describe('mongodb connector', function() {
           collection: 'ProductCollection', // Customize the collection name
         },
         forceId: false,
-      }
+      },
     );
 
     PostWithStringId = db.define('PostWithStringId', {
@@ -254,6 +277,13 @@ describe('mongodb connector', function() {
     Category = db.define('Category', {
       title: {type: String, length: 255, index: true},
       posts: {type: [db.ObjectID], index: true},
+    }, {
+      indexes: {
+        'title_case_insensitive': {
+          keys: {title: 1},
+          options: {collation: {locale: 'en', strength: 1}},
+        },
+      },
     });
 
     PostWithStringIdAndRenamedColumns = db.define(
@@ -272,7 +302,7 @@ describe('mongodb connector', function() {
         mongodb: {
           collection: 'PostWithStringId', // Overlay on the PostWithStringId collection
         },
-      }
+      },
     );
 
     PostWithDisableDefaultSort = db.define(
@@ -284,7 +314,34 @@ describe('mongodb connector', function() {
       },
       {
         disableDefaultSort: true,
-      }
+      },
+    );
+
+    WithEmbeddedProperties = db.define(
+      'WithEmbeddedProperties',
+      {
+        id: {type: String, id: true},
+        name: {type: String},
+        location: {
+          type: {
+            city: {type: String},
+            country: {type: String},
+          },
+        },
+      },
+    );
+
+    WithEmbeddedBinaryProperties = db.define(
+      'WithEmbeddedBinaryProperties',
+      {
+        name: {type: String},
+        image: {
+          type: {
+            label: String,
+            rawImg: Buffer,
+          },
+        },
+      },
     );
 
     User.hasMany(Post);
@@ -300,7 +357,11 @@ describe('mongodb connector', function() {
             PostWithNumberUnderscoreId.destroyAll(function() {
               PostWithStringId.destroyAll(function() {
                 PostWithDisableDefaultSort.destroyAll(function() {
-                  done();
+                  Category.destroyAll(function() {
+                    WithEmbeddedProperties.destroyAll(function() {
+                      done();
+                    });
+                  });
                 });
               });
             });
@@ -316,21 +377,24 @@ describe('mongodb connector', function() {
     });
 
     it('should report connection errors with invalid config', function(done) {
-      var ds = global.getDataSource({
+      const ds = global.getDataSource({
         host: 'localhost',
         port: 4, // unassigned by IANA
+        serverSelectionTimeoutMS: 1000,
       });
       ds.ping(function(err) {
-        (!!err).should.be.True();
-        err.message.should.match(/failed to connect to server/);
+        should.exist(err);
+        err.name.should.equalOneOf('MongoServerSelectionError', 'MongoNetworkError', 'MongoTimeoutError');
+        err.message.should.match(/connect ECONNREFUSED/);
         done();
       });
     });
 
     it('ignores invalid option', function(done) {
-      var configWithInvalidOption = global.config;
-      configWithInvalidOption.invalidOption = 'invalid';
-      var ds = global.getDataSource(configWithInvalidOption);
+      const configWithInvalidOption = Object.assign({}, global.config, {
+        invalidOption: 'invalid',
+      });
+      const ds = global.getDataSource(configWithInvalidOption);
       ds.ping(function(err) {
         if (err) return done(err);
         ds.disconnect(done);
@@ -338,9 +402,9 @@ describe('mongodb connector', function() {
     });
 
     it('accepts database from the url', function(done) {
-      var cfg = JSON.parse(JSON.stringify(global.config));
+      const cfg = JSON.parse(JSON.stringify(global.config));
       delete cfg.database;
-      var ds = global.getDataSource(cfg);
+      const ds = global.getDataSource(cfg);
       ds.ping(function(err) {
         if (err) return done(err);
         ds.disconnect(done);
@@ -348,13 +412,13 @@ describe('mongodb connector', function() {
     });
 
     it('should prioritize to the database given in the url property', function(done) {
-      var cfg = JSON.parse(JSON.stringify(global.config));
-      var testDb = 'lb-ds-overriden-test-1';
-      cfg.url = 'mongodb://' + cfg.hostname + ':' + cfg.port + '/' + testDb;
-      var ds = global.getDataSource(cfg);
+      const cfg = JSON.parse(JSON.stringify(global.config));
+      const testDb = 'lb-ds-overriden-test-1';
+      cfg.url = 'mongodb://' + cfg.host + ':' + cfg.port + '/' + testDb;
+      const ds = global.getDataSource(cfg);
       ds.once('connected', function() {
-        var db = ds.connector.db;
-        var validationError = null;
+        const db = ds.connector.db;
+        let validationError = null;
         try {
           db.should.have.property('databaseName', testDb); // check the db name in the db instance
         } catch (err) {
@@ -374,7 +438,7 @@ describe('mongodb connector', function() {
   });
 
   describe('order filters', function() {
-    var data = [
+    const data = [
       {
         id: 1,
         title: 'Senior Software Developer',
@@ -416,13 +480,13 @@ describe('mongodb connector', function() {
 
     context('using buildSort directly', function() {
       it('sort in descending order', function(done) {
-        var sort = db.connector.buildSort('Employee', 'id DESC');
+        const sort = db.connector.buildSort('Employee', 'id DESC');
         sort.should.have.property('_id');
         sort._id.should.equal(-1);
         done();
       });
       it('sort in ascending order', function(done) {
-        var sort = db.connector.buildSort('Employee', 'id ASC');
+        const sort = db.connector.buildSort('Employee', 'id ASC');
         sort.should.have.property('_id');
         sort._id.should.equal(1);
         done();
@@ -461,7 +525,7 @@ describe('mongodb connector', function() {
         .collection('User')
         .indexInformation(function(err, result) {
           /* eslint-disable camelcase */
-          var indexes = {
+          const indexes = {
             _id_: [['_id', 1]],
             name_age_index: [['name', 1], ['age', -1]],
             age_index: [['age', -1]],
@@ -479,7 +543,7 @@ describe('mongodb connector', function() {
     db.automigrate('Superhero', function() {
       db.connector.db.collection('sh').indexInformation(function(err, result) {
         /* eslint-disable camelcase */
-        var indexes = {
+        const indexes = {
           _id_: [['_id', 1]],
           geojson_location_geometry: [['location.geometry', '2dsphere']],
           power_1: [['power', 1]],
@@ -494,13 +558,30 @@ describe('mongodb connector', function() {
     });
   });
 
+  it('should create case insensitive indexes', function(done) {
+    db.automigrate('Category', function() {
+      db.connector.db.collection('Category').indexes(function(err, result) {
+        if (err) return done(err);
+        const indexes = [
+          {name: '_id_', key: {_id: 1}},
+          {name: 'title_1', key: {title: 1}},
+          {name: 'title_case_insensitive', key: {title: 1}, collation: {locale: 'en', strength: 1}},
+          {name: 'posts_1', key: {posts: 1}},
+        ];
+
+        result.should.containDeep(indexes);
+        done();
+      });
+    });
+  });
+
   it('should have created models with correct _id types', function(done) {
     PostWithObjectId.definition.properties._id.type.should.be.equal(
-      db.ObjectID
+      db.ObjectID,
     );
     should.not.exist(PostWithObjectId.definition.properties.id);
     PostWithNumberUnderscoreId.definition.properties._id.type.should.be.equal(
-      Number
+      Number,
     );
     should.not.exist(PostWithNumberUnderscoreId.definition.properties.id);
 
@@ -510,7 +591,7 @@ describe('mongodb connector', function() {
   it('should handle correctly type Number for id field _id', function(done) {
     PostWithNumberUnderscoreId.create({_id: 3, content: 'test'}, function(
       err,
-      person
+      person,
     ) {
       should.not.exist(err);
       person._id.should.be.equal(3);
@@ -527,7 +608,7 @@ describe('mongodb connector', function() {
   it('should handle correctly type Number for id field _id using string', function(done) {
     PostWithNumberUnderscoreId.create({_id: 4, content: 'test'}, function(
       err,
-      person
+      person,
     ) {
       should.not.exist(err);
       person._id.should.be.equal(4);
@@ -545,7 +626,7 @@ describe('mongodb connector', function() {
     PostWithObjectId.create(function(err, post) {
       PostWithObjectId.find({where: {_id: post._id.toString()}}, function(
         err,
-        p
+        p,
       ) {
         should.not.exist(err);
         post = p[0];
@@ -571,7 +652,7 @@ describe('mongodb connector', function() {
   it('should update the instance with `_id` as defined id', function(done) {
     PostWithObjectId.create({title: 'a', content: 'AAA'}, function(
       err,
-      post
+      post,
     ) {
       post.title = 'b';
       PostWithObjectId.updateOrCreate(post, function(err, p) {
@@ -599,7 +680,7 @@ describe('mongodb connector', function() {
   });
 
   it('all should return object (with `_id` as defined id) with an _id instanceof ObjectID', function(done) {
-    var post = new PostWithObjectId({title: 'a', content: 'AAA'});
+    const post = new PostWithObjectId({title: 'a', content: 'AAA'});
     post.save(function(err, post) {
       PostWithObjectId.all({where: {title: 'a'}}, function(err, posts) {
         should.not.exist(err);
@@ -615,7 +696,7 @@ describe('mongodb connector', function() {
   });
 
   it('all return should honor filter.fields, with `_id` as defined id', function(done) {
-    var post = new PostWithObjectId({title: 'a', content: 'AAA'});
+    const post = new PostWithObjectId({title: 'a', content: 'AAA'});
     post.save(function(err, post) {
       PostWithObjectId.all(
         {fields: ['title'], where: {title: 'a'}},
@@ -628,7 +709,27 @@ describe('mongodb connector', function() {
           should.not.exist(post._id);
 
           done();
-        }
+        },
+      );
+    });
+  });
+
+  it('all return should honor filter.fields with `_id` selected', function(done) {
+    const post = new PostWithObjectId({title: 'a', content: 'AAA'});
+    post.save(function(err, post) {
+      PostWithObjectId.all(
+        {fields: ['_id', 'content'], where: {title: 'a'}},
+        function(err, posts) {
+          should.not.exist(err);
+          if (err) return done(err);
+          posts.should.have.lengthOf(1);
+          post = posts[0];
+          should.not.exist(post.title);
+          post.should.have.property('content', 'AAA');
+          post._id.should.be.an.instanceOf(db.ObjectID);
+
+          done();
+        },
       );
     });
   });
@@ -637,6 +738,47 @@ describe('mongodb connector', function() {
     User.create({name: 'John', icon: new Buffer('1a2')}, function(e, u) {
       User.findById(u.id, function(e, user) {
         user.icon.should.be.an.instanceOf(Buffer);
+        done();
+      });
+    });
+  });
+
+  it('should properly retrieve embedded model properties', function(done) {
+    const data = {name: 'Mitsos', location: {city: 'Volos', country: 'Greece'}};
+    WithEmbeddedProperties.create(data, function(err, createdModel) {
+      if (err) return done(err);
+      WithEmbeddedProperties.findById(createdModel.id, function(err, dbModel) {
+        if (err) return done(err);
+        const modelObj = dbModel.toJSON();
+        const dataObj = Object.assign({id: modelObj.id}, data);
+        modelObj.should.be.eql(dataObj);
+        done();
+      });
+    });
+  });
+
+  it('should not present missing embedded model properties as null', function(done) {
+    const data = {name: 'Mitsos'};
+    WithEmbeddedProperties.create(data, function(err, createdModel) {
+      if (err) return done(err);
+      WithEmbeddedProperties.findById(createdModel.id, function(err, dbModel) {
+        if (err) return done(err);
+        const modelObj = dbModel.toJSON();
+        const dataObj = Object.assign({}, data, {id: modelObj.id, location: undefined});
+        modelObj.should.be.eql(dataObj);
+        done();
+      });
+    });
+  });
+
+  it('should convert embedded model binary properties to buffer correctly', function(done) {
+    const entity = {
+      name: 'Rigas',
+      image: {label: 'paris 2016', rawImg: Buffer.from([255, 216, 255, 224])},
+    };
+    WithEmbeddedBinaryProperties.create(entity, function(e, r) {
+      WithEmbeddedBinaryProperties.findById(r.id, function(e, post) {
+        post.image.rawImg.should.be.eql(Buffer.from([255, 216, 255, 224]));
         done();
       });
     });
@@ -658,7 +800,7 @@ describe('mongodb connector', function() {
   it('create should return id field but not mongodb _id', function(done) {
     Post.create({title: 'Post1', content: 'Post content'}, function(
       err,
-      post
+      post,
     ) {
       // console.log('create should', err, post);
       should.not.exist(err);
@@ -672,7 +814,7 @@ describe('mongodb connector', function() {
   it('should allow to find by id string', function(done) {
     Post.create({title: 'Post1', content: 'Post content'}, function(
       err,
-      post
+      post,
     ) {
       Post.findById(post.id.toString(), function(err, p) {
         should.not.exist(err);
@@ -685,7 +827,7 @@ describe('mongodb connector', function() {
   it('should allow custom collection name', function(done) {
     Post.create({title: 'Post1', content: 'Post content'}, function(
       err,
-      post
+      post,
     ) {
       Post.dataSource.connector.db
         .collection('PostCollection')
@@ -700,11 +842,11 @@ describe('mongodb connector', function() {
   it('should allow to find by id using where', function(done) {
     Post.create({title: 'Post1', content: 'Post1 content'}, function(
       err,
-      p1
+      p1,
     ) {
       Post.create({title: 'Post2', content: 'Post2 content'}, function(
         err,
-        p2
+        p2,
       ) {
         Post.find({where: {id: p1.id}}, function(err, p) {
           should.not.exist(err);
@@ -718,7 +860,7 @@ describe('mongodb connector', function() {
     });
   });
 
-  it('should not return data for nested `$where` in where', function(done) {
+  it('should return data for nested `$where` in where', function(done) {
     Post.create({title: 'Post1', content: 'Post1 content'}, (err, p1) => {
       Post.create({title: 'Post2', content: 'Post2 content'}, (err2, p2) => {
         Post.create({title: 'Post3', content: 'Post3 data'}, (err3, p3) => {
@@ -737,26 +879,27 @@ describe('mongodb connector', function() {
       Post.create({title: 'Post2', content: 'Post2 content'}, (err2, p2) => {
         Post.create({title: 'Post3', content: 'Post3 data'}, (err3, p3) => {
           Post.find(
-            {where: {$where: 'function() {return this.content.contains("content")}'}},
+            {where: {$where: 'function() {return this.content.includes("content")}'}},
             {disableSanitization: true},
             (err, p) => {
               should.not.exist(err);
               p.length.should.be.equal(2);
               done();
-            }
+            },
           );
         });
       });
     });
   });
 
-  it('does not execute a nested `$where`', function(done) {
+  it('does not execute a nested `$where` when extended operators are allowed', function(done) {
+    const nestedWhereFilter = {where: {content: {$where: 'function() {return this.content.includes("content")}'}}};
     Post.create({title: 'Post1', content: 'Post1 content'}, (err, p1) => {
       Post.create({title: 'Post2', content: 'Post2 content'}, (err2, p2) => {
         Post.create({title: 'Post3', content: 'Post3 data'}, (err3, p3) => {
-          Post.find({where: {content: {$where: 'function() {return this.content.contains("content")}'}}}, (err, p) => {
-            should.not.exist(err);
-            p.length.should.be.equal(0);
+          Post.find(nestedWhereFilter, {allowExtendedOperators: true}, (err, p) => {
+            should.exist(err);
+            err.message.should.match(/\$where/);
             done();
           });
         });
@@ -767,11 +910,11 @@ describe('mongodb connector', function() {
   it('should allow to find by id using where inq', function(done) {
     Post.create({title: 'Post1', content: 'Post1 content'}, function(
       err,
-      p1
+      p1,
     ) {
       Post.create({title: 'Post2', content: 'Post2 content'}, function(
         err,
-        p2
+        p2,
       ) {
         Post.find({where: {id: {inq: [p1.id]}}}, function(err, p) {
           should.not.exist(err);
@@ -786,8 +929,8 @@ describe('mongodb connector', function() {
   });
 
   it('should invoke hooks', function(done) {
-    var events = [];
-    var connector = Post.getDataSource().connector;
+    const events = [];
+    const connector = Post.getDataSource().connector;
     connector.observe('before execute', function(ctx, next) {
       ctx.req.command.should.be.String();
       ctx.req.params.should.be.Array();
@@ -801,7 +944,7 @@ describe('mongodb connector', function() {
     });
     Post.create({title: 'Post1', content: 'Post1 content'}, function(
       err,
-      p1
+      p1,
     ) {
       Post.find(function(err, results) {
         events.should.eql([
@@ -831,9 +974,9 @@ describe('mongodb connector', function() {
               p[0].id.should.be.eql(p1.id);
               done();
             });
-          }
+          },
         );
-      }
+      },
     );
   });
 
@@ -846,7 +989,7 @@ describe('mongodb connector', function() {
           function(err, p2) {
             PostWithNumberId.find({where: {id: {inq: [1]}}}, function(
               err,
-              p
+              p,
             ) {
               should.not.exist(err);
               should.exist(p && p[0]);
@@ -865,21 +1008,21 @@ describe('mongodb connector', function() {
                       should.not.exist(err);
                       p.length.should.be.equal(0);
                       done();
-                    }
+                    },
                   );
-                }
+                },
               );
             });
-          }
+          },
         );
-      }
+      },
     );
   });
 
   it('save should not return mongodb _id', function(done) {
     Post.create({title: 'Post1', content: 'Post content'}, function(
       err,
-      post
+      post,
     ) {
       post.content = 'AAA';
       post.save(function(err, p) {
@@ -896,7 +1039,7 @@ describe('mongodb connector', function() {
   it('find should return an object with an id, which is instanceof ObjectID, but not mongodb _id', function(done) {
     Post.create({title: 'Post1', content: 'Post content'}, function(
       err,
-      post
+      post,
     ) {
       Post.findById(post.id, function(err, post) {
         should.not.exist(err);
@@ -909,10 +1052,31 @@ describe('mongodb connector', function() {
   });
 
   describe('updateAll', function() {
+    it('should not mutate the input data object', async function() {
+      const user = await User.create({name: 'Al', age: 31, email: 'al@strongloop'});
+      const userId = user.id;
+      const userData = user.toObject();
+      userData.age = 100;
+
+      await User.update(userData);
+      userData.should.have.property('id', userId);
+    });
+
+    it('should not mutate the input model instance', async function() {
+      const user = await User.create({name: 'Al', age: 31, email: 'al@strongloop'});
+      const userId = user.id;
+      user.age = 100;
+      user.name = 'Albert';
+
+      await User.update(user);
+      user.should.have.property('id', userId);
+      user.should.have.property('name', 'Albert');
+    });
+
     it('should update the instance matching criteria', function(done) {
       User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
         err1,
-        createdusers1
+        createdusers1,
       ) {
         should.not.exist(err1);
         User.create(
@@ -933,7 +1097,7 @@ describe('mongodb connector', function() {
 
                     User.find({where: {age: 31}}, function(
                       err2,
-                      foundusers
+                      foundusers,
                     ) {
                       should.not.exist(err2);
                       foundusers[0].company.should.be.equal('strongloop.com');
@@ -941,11 +1105,11 @@ describe('mongodb connector', function() {
 
                       done();
                     });
-                  }
+                  },
                 );
-              }
+              },
             );
-          }
+          },
         );
       });
     });
@@ -955,7 +1119,7 @@ describe('mongodb connector', function() {
 
       User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
         err1,
-        createdusers1
+        createdusers1,
       ) {
         should.not.exist(err1);
         User.create(
@@ -968,7 +1132,7 @@ describe('mongodb connector', function() {
                 should.not.exist(err3);
                 User.updateAll({}, {age: 40, $set: {age: 39}}, function(
                   err,
-                  updatedusers
+                  updatedusers,
                 ) {
                   should.not.exist(err);
                   updatedusers.should.have.property('count', 3);
@@ -979,7 +1143,7 @@ describe('mongodb connector', function() {
 
                     User.find({where: {age: 39}}, function(
                       err3,
-                      foundusers
+                      foundusers,
                     ) {
                       should.not.exist(err3);
                       foundusers.length.should.be.equal(3);
@@ -992,13 +1156,13 @@ describe('mongodb connector', function() {
                           updatedusers.should.have.property('count', 3);
                           User.find({where: {age: 40}}, function(
                             err2,
-                            foundusers
+                            foundusers,
                           ) {
                             should.not.exist(err2);
                             foundusers.length.should.be.equal(3);
                             User.find({where: {age: 39}}, function(
                               err3,
-                              foundusers
+                              foundusers,
                             ) {
                               should.not.exist(err3);
                               foundusers.length.should.be.equal(0);
@@ -1006,19 +1170,19 @@ describe('mongodb connector', function() {
                               done();
                             });
                           });
-                        }
+                        },
                       );
                     });
                   });
                 });
-              }
+              },
             );
-          }
+          },
         );
       });
     });
 
-    var describeMongo26 = describe;
+    let describeMongo26 = describe;
     if (
       process.env.MONGODB_VERSION &&
       !semver.satisfies(process.env.MONGODB_VERSION, '~2.6.0')
@@ -1030,7 +1194,7 @@ describe('mongodb connector', function() {
       it('should use $set by default if no operator is supplied', function(done) {
         User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
           err1,
-          createdusers1
+          createdusers1,
         ) {
           should.not.exist(err1);
           User.create(
@@ -1044,14 +1208,14 @@ describe('mongodb connector', function() {
 
                   User.updateAll({name: 'Simon'}, {name: 'Alex'}, function(
                     err,
-                    updatedusers
+                    updatedusers,
                   ) {
                     should.not.exist(err);
                     updatedusers.should.have.property('count', 1);
 
                     User.find({where: {name: 'Alex'}}, function(
                       err,
-                      founduser
+                      founduser,
                     ) {
                       should.not.exist(err);
                       founduser.length.should.be.equal(1);
@@ -1060,9 +1224,9 @@ describe('mongodb connector', function() {
                       done();
                     });
                   });
-                }
+                },
               );
-            }
+            },
           );
         });
       });
@@ -1070,7 +1234,7 @@ describe('mongodb connector', function() {
       it('should use $set by default if no operator is supplied (using renamed columns)', function(done) {
         User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
           err1,
-          createdusers1
+          createdusers1,
         ) {
           should.not.exist(err1);
           User.create(
@@ -1091,7 +1255,7 @@ describe('mongodb connector', function() {
 
                       User.find({where: {name: 'Alex'}}, function(
                         err,
-                        founduser
+                        founduser,
                       ) {
                         should.not.exist(err);
                         founduser.length.should.be.equal(1);
@@ -1099,11 +1263,11 @@ describe('mongodb connector', function() {
 
                         done();
                       });
-                    }
+                    },
                   );
-                }
+                },
               );
-            }
+            },
           );
         });
       });
@@ -1113,7 +1277,7 @@ describe('mongodb connector', function() {
         User.settings.mongodb = {allowExtendedOperators: true};
         User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
           err1,
-          createdusers1
+          createdusers1,
         ) {
           should.not.exist(err1);
 
@@ -1126,14 +1290,14 @@ describe('mongodb connector', function() {
 
               User.find({where: {firstname: 'Al'}}, function(
                 err,
-                foundusers
+                foundusers,
               ) {
                 should.not.exist(err);
                 foundusers.length.should.be.equal(1);
 
                 done();
               });
-            }
+            },
           );
         });
       });
@@ -1143,7 +1307,7 @@ describe('mongodb connector', function() {
         User.settings.mongodb = {allowExtendedOperators: true};
         User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
           err1,
-          createdusers1
+          createdusers1,
         ) {
           should.not.exist(err1);
 
@@ -1155,10 +1319,10 @@ describe('mongodb connector', function() {
               err.name.should.equal('MongoError');
               err.errmsg.should.equal(
                 'The dollar ($) prefixed ' +
-                  "field '$rename' in '$rename' is not valid for storage."
+                "field '$rename' in '$rename' is not valid for storage.",
               );
               done();
-            }
+            },
           );
         });
       });
@@ -1168,7 +1332,7 @@ describe('mongodb connector', function() {
         User.settings.mongodb = {allowExtendedOperators: false};
         User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
           err1,
-          createdusers1
+          createdusers1,
         ) {
           should.not.exist(err1);
 
@@ -1180,20 +1344,20 @@ describe('mongodb connector', function() {
               err.name.should.equal('MongoError');
               err.errmsg.should.equal(
                 'The dollar ($) prefixed ' +
-                  "field '$rename' in '$rename' is not valid for storage."
+                "field '$rename' in '$rename' is not valid for storage.",
               );
               done();
-            }
+            },
           );
         });
       });
 
       it('should be possible to enable using options - even if globally disabled', function(done) {
         User.dataSource.settings.allowExtendedOperators = false;
-        var options = {allowExtendedOperators: true};
+        const options = {allowExtendedOperators: true};
         User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
           err1,
-          createdusers1
+          createdusers1,
         ) {
           should.not.exist(err1);
 
@@ -1207,24 +1371,24 @@ describe('mongodb connector', function() {
 
               User.find({where: {firstname: 'Al'}}, function(
                 err,
-                foundusers
+                foundusers,
               ) {
                 should.not.exist(err);
                 foundusers.length.should.be.equal(1);
 
                 done();
               });
-            }
+            },
           );
         });
       });
 
       it('should be possible to disable using options - even if globally disabled', function(done) {
         User.dataSource.settings.allowExtendedOperators = true;
-        var options = {allowExtendedOperators: false};
+        const options = {allowExtendedOperators: false};
         User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
           err1,
-          createdusers1
+          createdusers1,
         ) {
           should.not.exist(err1);
 
@@ -1237,10 +1401,10 @@ describe('mongodb connector', function() {
               err.name.should.equal('MongoError');
               err.errmsg.should.equal(
                 'The dollar ($) prefixed ' +
-                  "field '$rename' in '$rename' is not valid for storage."
+                "field '$rename' in '$rename' is not valid for storage.",
               );
               done();
-            }
+            },
           );
         });
       });
@@ -1249,7 +1413,7 @@ describe('mongodb connector', function() {
         User.dataSource.settings.allowExtendedOperators = true;
         User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
           err1,
-          createdusers1
+          createdusers1,
         ) {
           should.not.exist(err1);
           User.create(
@@ -1270,7 +1434,7 @@ describe('mongodb connector', function() {
 
                       User.find({where: {name: 'Ray'}}, function(
                         err,
-                        foundusers
+                        foundusers,
                       ) {
                         should.not.exist(err);
                         foundusers.length.should.be.equal(1);
@@ -1278,11 +1442,11 @@ describe('mongodb connector', function() {
 
                         done();
                       });
-                    }
+                    },
                   );
-                }
+                },
               );
-            }
+            },
           );
         });
       });
@@ -1296,21 +1460,21 @@ describe('mongodb connector', function() {
 
             User.updateAll({name: 'Simon'}, {$max: {age: 33}}, function(
               err,
-              updatedusers
+              updatedusers,
             ) {
               should.not.exist(err);
               updatedusers.should.have.property('count', 1);
 
               User.updateAll({name: 'Simon'}, {$min: {age: 31}}, function(
                 err,
-                updatedusers
+                updatedusers,
               ) {
                 should.not.exist(err);
                 updatedusers.should.have.property('count', 1);
 
                 User.find({where: {name: 'Simon'}}, function(
                   err,
-                  foundusers
+                  foundusers,
                 ) {
                   should.not.exist(err);
                   foundusers.length.should.be.equal(1);
@@ -1320,7 +1484,7 @@ describe('mongodb connector', function() {
                 });
               });
             });
-          }
+          },
         );
       });
 
@@ -1328,13 +1492,13 @@ describe('mongodb connector', function() {
         User.dataSource.settings.allowExtendedOperators = true;
         User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
           err1,
-          createdusers1
+          createdusers1,
         ) {
           should.not.exist(err1);
 
           User.updateAll({name: 'Al'}, {$mul: {age: 2}}, function(
             err,
-            updatedusers
+            updatedusers,
           ) {
             should.not.exist(err);
             updatedusers.should.have.property('count', 1);
@@ -1354,7 +1518,7 @@ describe('mongodb connector', function() {
         User.dataSource.settings.allowExtendedOperators = true;
         User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
           err1,
-          createdusers1
+          createdusers1,
         ) {
           should.not.exist(err1);
 
@@ -1367,14 +1531,14 @@ describe('mongodb connector', function() {
 
               User.find({where: {firstname: 'Al'}}, function(
                 err,
-                foundusers
+                foundusers,
               ) {
                 should.not.exist(err);
                 foundusers.length.should.be.equal(1);
 
                 done();
               });
-            }
+            },
           );
         });
       });
@@ -1382,13 +1546,13 @@ describe('mongodb connector', function() {
         User.dataSource.settings.allowExtendedOperators = true;
         User.create({name: 'Al', age: 31, email: 'al@strongloop'}, function(
           err1,
-          createdusers1
+          createdusers1,
         ) {
           should.not.exist(err1);
 
           User.updateAll({name: 'Al'}, {$unset: {email: ''}}, function(
             err,
-            updatedusers
+            updatedusers,
           ) {
             should.not.exist(err);
             updatedusers.should.have.property('count', 1);
@@ -1403,6 +1567,28 @@ describe('mongodb connector', function() {
           });
         });
       });
+    });
+
+    it('should allow extended operators in update data for strict models', function() {
+      const noteModel = db.define('noteModel', {
+        title: String,
+        description: String,
+      }, {strict: true});
+      noteModel.settings.mongodb = {allowExtendedOperators: true};
+      let noteId;
+
+      return noteModel.create({title: 'note1', description: 'grocery list'})
+        .then(function(createdInstance) {
+          noteId = createdInstance.id;
+          return noteModel.updateAll({id: noteId}, {$set: {description: 'updated list', title: 'setTitle'}});
+        })
+        .then(function() {
+          return noteModel.findById(noteId);
+        })
+        .then(function(foundNote) {
+          foundNote.title.should.equal('setTitle');
+          foundNote.description.should.equal('updated list');
+        });
     });
   });
 
@@ -1523,7 +1709,7 @@ describe('mongodb connector', function() {
     Product.create(
       {name: 'bread', price: 100, pricehistory: [{'2014-11-11': 90}]},
       function(err, product) {
-        var newattributes = {
+        const newattributes = {
           $set: {description: 'goes well with butter'},
           $addToSet: {pricehistory: {'2014-12-12': 110}},
         };
@@ -1541,7 +1727,7 @@ describe('mongodb connector', function() {
             done();
           });
         });
-      }
+      },
     );
   });
 
@@ -1563,7 +1749,7 @@ describe('mongodb connector', function() {
           updatedproduct.pricehistory[1]['2014-12-12'].should.be.equal(110);
           done();
         });
-      }
+      },
     );
   });
 
@@ -1589,7 +1775,7 @@ describe('mongodb connector', function() {
           updatedproduct.pricehistory[1]['2014-10-10'].should.be.equal(80);
           done();
         });
-      }
+      },
     );
   });
 
@@ -1602,7 +1788,7 @@ describe('mongodb connector', function() {
         pricehistory: [{'2014-11-11': 90}, {'2014-10-10': 80}],
       },
       function(err, product) {
-        var newattributes = {
+        const newattributes = {
           $set: {description: 'goes well with butter'},
           $addToSet: {pricehistory: {'2014-12-12': 110}},
         };
@@ -1620,7 +1806,7 @@ describe('mongodb connector', function() {
             done();
           });
         });
-      }
+      },
     );
   });
 
@@ -1637,7 +1823,7 @@ describe('mongodb connector', function() {
         ],
       },
       function(err, product) {
-        var newattributes = {
+        const newattributes = {
           $set: {description: 'goes well with butter'},
           $addToSet: {pricehistory: 1},
         };
@@ -1655,7 +1841,7 @@ describe('mongodb connector', function() {
             done();
           });
         });
-      }
+      },
     );
   });
 
@@ -1692,7 +1878,7 @@ describe('mongodb connector', function() {
             done();
           });
         });
-      }
+      },
     );
   });
 
@@ -1701,7 +1887,7 @@ describe('mongodb connector', function() {
     Product.create(
       {name: 'bread', price: 100, pricehistory: [70, 80, 90, 100]},
       function(err, product) {
-        var newattributes = {
+        const newattributes = {
           $set: {description: 'goes well with butter'},
           $pull: {pricehistory: {$gte: 90}},
         };
@@ -1719,7 +1905,7 @@ describe('mongodb connector', function() {
             done();
           });
         });
-      }
+      },
     );
   });
 
@@ -1742,7 +1928,7 @@ describe('mongodb connector', function() {
 
           done();
         });
-      }
+      },
     );
   });
 
@@ -1751,7 +1937,7 @@ describe('mongodb connector', function() {
     Product.create(
       {name: 'bread', price: 100, pricehistory: [70, 80, 90, 100]},
       function(err, product) {
-        var newattributes = {
+        const newattributes = {
           $set: {description: 'goes well with butter'},
           $pullAll: {pricehistory: [80, 100]},
         };
@@ -1770,7 +1956,7 @@ describe('mongodb connector', function() {
             done();
           });
         });
-      }
+      },
     );
   });
 
@@ -1793,7 +1979,7 @@ describe('mongodb connector', function() {
 
           done();
         });
-      }
+      },
     );
   });
 
@@ -1806,7 +1992,7 @@ describe('mongodb connector', function() {
         pricehistory: [{'2014-11-11': 90}, {'2014-10-10': 80}],
       },
       function(err, product) {
-        var newattributes = {
+        const newattributes = {
           $set: {description: 'goes well with butter'},
           $push: {pricehistory: {'2014-10-10': 80}},
         };
@@ -1827,7 +2013,7 @@ describe('mongodb connector', function() {
             done();
           });
         });
-      }
+      },
     );
   });
 
@@ -1854,15 +2040,42 @@ describe('mongodb connector', function() {
           updatedproduct.pricehistory[2]['2014-10-10'].should.be.equal(80);
           done();
         });
-      }
+      },
     );
+  });
+
+  describe('replaceById', function() {
+    it('should replace the object with given data', function(done) {
+      Product.create({name: 'beer', price: 150}, function(err, product) {
+        if (err) return done(err);
+        replaceById(product.id, {name: 'milk'});
+      });
+
+      function replaceById(id, data) {
+        Product.replaceById(id, data, function(err, updatedProduct) {
+          if (err) return done(err);
+          should.not.exist(updatedProduct._id);
+          updatedProduct.name.should.be.equal('milk');
+          should.exist(updatedProduct.id);
+          verify(id);
+        });
+      }
+
+      function verify(id) {
+        Product.findById(id, function(err, data) {
+          data.name.should.be.equal('milk');
+          should.not.exist(data.price);
+          done(err);
+        });
+      }
+    });
   });
 
   describe('replaceOrCreate', function() {
     it('should create a model instance even if it already exists', function(done) {
       Product.replaceOrCreate({name: 'newFoo'}, function(
         err,
-        updatedProduct
+        updatedProduct,
       ) {
         if (err) return done(err);
         should.not.exist(updatedProduct._id);
@@ -1903,7 +2116,7 @@ describe('mongodb connector', function() {
     it('should remove extraneous properties that are not defined in the model', function(done) {
       Product.create({name: 'bread', price: 100, bar: 'baz'}, function(
         err,
-        product
+        product,
       ) {
         if (err) return done(err);
         replaceOrCreate({id: product.id, name: 'milk'});
@@ -1951,7 +2164,7 @@ describe('mongodb connector', function() {
     it('should remove extraneous properties that are not defined in the model', function(done) {
       Product.create({name: 'bread', price: 100, bar: 'baz'}, function(
         err,
-        product
+        product,
       ) {
         if (err) return done(err);
         replace(product, {name: 'milk'}, product.id);
@@ -2001,7 +2214,7 @@ describe('mongodb connector', function() {
 
           done();
         });
-      }
+      },
     );
   });
 
@@ -2028,12 +2241,12 @@ describe('mongodb connector', function() {
             done();
           });
         });
-      }
+      },
     );
   });
 
   it('updateOrCreate should create a new instance if it does not exist', function(done) {
-    var post = {id: '123', title: 'a', content: 'AAA'};
+    const post = {id: '123', title: 'a', content: 'AAA'};
     Post.updateOrCreate(post, function(err, p) {
       should.not.exist(err);
       p.title.should.be.equal(post.title);
@@ -2095,7 +2308,7 @@ describe('mongodb connector', function() {
   });
 
   it('save should create a new instance if it does not exist', function(done) {
-    var post = new Post({id: '123', title: 'a', content: 'AAA'});
+    const post = new Post({id: '123', title: 'a', content: 'AAA'});
     post.save(post, function(err, p) {
       should.not.exist(err);
       p.title.should.be.equal(post.title);
@@ -2114,7 +2327,7 @@ describe('mongodb connector', function() {
     });
   });
   it('all should return object with an id, which is instanceof ObjectID, but not mongodb _id', function(done) {
-    var post = new Post({title: 'a', content: 'AAA'});
+    const post = new Post({title: 'a', content: 'AAA'});
     post.save(function(err, post) {
       Post.all({where: {title: 'a'}}, function(err, posts) {
         should.not.exist(err);
@@ -2131,7 +2344,7 @@ describe('mongodb connector', function() {
   });
 
   it('all return should honor filter.fields', function(done) {
-    var post = new Post({title: 'b', content: 'BBB'});
+    const post = new Post({title: 'b', content: 'BBB'});
     post.save(function(err, post) {
       db.connector.all(
         'Post',
@@ -2147,17 +2360,17 @@ describe('mongodb connector', function() {
           should.not.exist(post.id);
 
           done();
-        }
+        },
       );
     });
   });
 
   it('create should convert id from ObjectID to string', function(done) {
-    var oid = new db.ObjectID();
-    var sid = oid.toString();
+    const oid = new db.ObjectID();
+    const sid = oid.toString();
     PostWithStringId.create({id: oid, title: 'c', content: 'CCC'}, function(
       err,
-      post
+      post,
     ) {
       PostWithStringId.findById(oid, function(err, post) {
         should.not.exist(err);
@@ -2171,8 +2384,8 @@ describe('mongodb connector', function() {
   });
 
   it('create should convert id from string to ObjectID', function(done) {
-    var oid = new db.ObjectID();
-    var sid = oid.toString();
+    const oid = new db.ObjectID();
+    const sid = oid.toString();
     Post.create({id: sid, title: 'c', content: 'CCC'}, function(err, post) {
       post.id.should.be.an.instanceOf(db.ObjectID);
       Post.findById(sid, function(err, post) {
@@ -2190,7 +2403,7 @@ describe('mongodb connector', function() {
     Post.create({title: 'c', content: 'CCC'}, function(err, post) {
       Category.create({title: 'a', posts: [String(post.id)]}, function(
         err,
-        category
+        category,
       ) {
         category.id.should.be.an.instanceOf(db.ObjectID);
         category.posts[0].should.be.an.instanceOf(db.ObjectID);
@@ -2207,10 +2420,10 @@ describe('mongodb connector', function() {
   });
 
   it('create should support renamed column names (using property syntax first)', function(done) {
-    var oid = new db.ObjectID().toString();
+    const oid = new db.ObjectID().toString();
     PostWithStringId.create({id: oid, title: 'c', content: 'CCC'}, function(
       err,
-      post
+      post,
     ) {
       PostWithStringIdAndRenamedColumns.findById(oid, function(err, post) {
         should.not.exist(err);
@@ -2228,7 +2441,7 @@ describe('mongodb connector', function() {
   });
 
   it('create should support renamed column names (using db syntax first)', function(done) {
-    var oid = new db.ObjectID().toString();
+    const oid = new db.ObjectID().toString();
     PostWithStringIdAndRenamedColumns.create(
       {
         id: oid,
@@ -2248,15 +2461,15 @@ describe('mongodb connector', function() {
 
           done();
         });
-      }
+      },
     );
   });
 
   describe('geo queries', function() {
-    var geoDb, PostWithLocation, createLocationPost;
+    let geoDb, PostWithLocation, createLocationPost;
 
     before(function() {
-      var config = JSON.parse(JSON.stringify(global.config)); // clone config
+      const config = JSON.parse(JSON.stringify(global.config)); // clone config
       config.enableGeoIndexing = true;
 
       geoDb = global.getDataSource(config);
@@ -2266,7 +2479,7 @@ describe('mongodb connector', function() {
         location: {type: GeoPoint, index: true},
       });
       createLocationPost = function(far) {
-        var point;
+        let point;
         if (far) {
           point = new GeoPoint({
             lat: 31.230416,
@@ -2289,7 +2502,7 @@ describe('mongodb connector', function() {
     });
 
     it('create should convert geopoint to geojson', function(done) {
-      var point = new GeoPoint({lat: 1.243, lng: 20.4});
+      const point = new GeoPoint({lat: 1.243, lng: 20.4});
 
       PostWithLocation.create({location: point}, function(err, post) {
         should.not.exist(err);
@@ -2300,12 +2513,64 @@ describe('mongodb connector', function() {
       });
     });
 
+    it('updateOrCreate should convert geopoint to geojson', function(done) {
+      const point = new GeoPoint({lat: 1.243, lng: 20.4});
+      const newPoint = new GeoPoint({lat: 1.2431, lng: 20.41});
+
+      PostWithLocation.create({location: point}, function(err, post) {
+        should.not.exist(err);
+        point.lat.should.be.equal(post.location.lat);
+        point.lng.should.be.equal(post.location.lng);
+
+        post.location = newPoint;
+
+        PostWithLocation.updateOrCreate(post, function(err, p) {
+          should.not.exist(err);
+          p._id.should.be.equal(post._id);
+
+          PostWithLocation.findById(post._id, function(err, p2) {
+            should.not.exist(err);
+            p2._id.should.be.eql(post._id);
+            p2.location.lat.should.be.equal(newPoint.lat);
+            p2.location.lng.should.be.equal(newPoint.lng);
+            done();
+          });
+        });
+      });
+    });
+
+    it('replaceById should convert geopoint to geojson', function(done) {
+      const point = new GeoPoint({lat: 1.243, lng: 20.4});
+      const newPoint = new GeoPoint({lat: 1.2431, lng: 20.41});
+
+      PostWithLocation.create({location: point}, function(err, post) {
+        should.not.exist(err);
+        point.lat.should.be.equal(post.location.lat);
+        point.lng.should.be.equal(post.location.lng);
+
+        post.location = newPoint;
+
+        PostWithLocation.replaceById(post._id, post, function(err, p) {
+          should.not.exist(err);
+          p._id.should.be.equal(post._id);
+
+          PostWithLocation.findById(post._id, function(err, p) {
+            should.not.exist(err);
+            p._id.should.be.eql(post._id);
+            p.location.lat.should.be.equal(newPoint.lat);
+            p.location.lng.should.be.equal(newPoint.lng);
+            done();
+          });
+        });
+      });
+    });
+
     it('find should be able to query by location', function(done) {
-      var coords = {lat: 1.25, lng: 20.2};
+      const coords = {lat: 1.25, lng: 20.2};
 
       geoDb.autoupdate(function(err) {
-        var createPost = function(callback) {
-          var point = new GeoPoint({
+        const createPost = function(callback) {
+          const point = new GeoPoint({
             lat: Math.random() * 180 - 90,
             lng: Math.random() * 360 - 180,
           });
@@ -2335,30 +2600,30 @@ describe('mongodb connector', function() {
                 should.not.exist(err);
                 should.exist(results);
 
-                var dist = 0;
+                let dist = 0;
                 results.forEach(function(result) {
-                  var currentDist = testUtils.getDistanceBetweenPoints(
+                  const currentDist = testUtils.getDistanceBetweenPoints(
                     coords,
-                    result.location
+                    result.location,
                   );
                   currentDist.should.be.aboveOrEqual(dist);
                   dist = currentDist;
                 });
 
                 done();
-              }
+              },
             );
-          }
+          },
         );
       });
     });
 
     it('find should be queryable using locations with deep/multiple keys', function(done) {
-      var coords = {lat: 1.25, lng: 20.2};
+      const coords = {lat: 1.25, lng: 20.2};
 
       geoDb.autoupdate(function(err) {
-        var heroNumber = 0;
-        var powers = ['fly', 'lasers', 'strength', 'drink'];
+        let heroNumber = 0;
+        const powers = ['fly', 'lasers', 'strength', 'drink'];
 
         function createSuperheroWithLocation(callback) {
           heroNumber++;
@@ -2375,7 +2640,7 @@ describe('mongodb connector', function() {
                 },
               },
             },
-            callback
+            callback,
           );
         }
 
@@ -2409,9 +2674,9 @@ describe('mongodb connector', function() {
 
                 results.should.have.length(1);
 
-                var dist = 0;
+                let dist = 0;
                 results.forEach(function(result) {
-                  var currentDist = testUtils.getDistanceBetweenPoints(coords, {
+                  const currentDist = testUtils.getDistanceBetweenPoints(coords, {
                     lng: result.location.geometry.coordinates[0],
                     lat: result.location.geometry.coordinates[1],
                   });
@@ -2420,15 +2685,15 @@ describe('mongodb connector', function() {
                 });
 
                 done();
-              }
+              },
             );
-          }
+          },
         );
       });
     });
 
     it('find should be able to query by location via near with maxDistance', function(done) {
-      var coords = {lat: 30.274085, lng: 120.15507000000002};
+      const coords = {lat: 30.274085, lng: 120.15507000000002};
 
       geoDb.autoupdate(function(err) {
         async.parallel(
@@ -2453,26 +2718,26 @@ describe('mongodb connector', function() {
               function(err, results) {
                 if (err) return done(err);
                 results.length.should.be.equal(3);
-                var dist = 0;
+                let dist = 0;
                 results.forEach(function(result) {
-                  var currentDist = testUtils.getDistanceBetweenPoints(
+                  const currentDist = testUtils.getDistanceBetweenPoints(
                     coords,
-                    result.location
+                    result.location,
                   );
                   currentDist.should.be.aboveOrEqual(dist);
                   currentDist.should.be.belowOrEqual(17);
                   dist = currentDist;
                 });
                 done();
-              }
+              },
             );
-          }
+          },
         );
       });
     });
 
     it('find should be able to query by location via near with minDistance set', function(done) {
-      var coords = {lat: 30.274085, lng: 120.15507000000002};
+      const coords = {lat: 30.274085, lng: 120.15507000000002};
       geoDb.autoupdate(function(err) {
         async.parallel(
           [
@@ -2496,32 +2761,32 @@ describe('mongodb connector', function() {
               function(err, results) {
                 if (err) return done(err);
                 results.length.should.be.equal(1);
-                var dist = 0;
+                let dist = 0;
                 results.forEach(function(result) {
-                  var currentDist = testUtils.getDistanceBetweenPoints(
+                  const currentDist = testUtils.getDistanceBetweenPoints(
                     coords,
-                    result.location
+                    result.location,
                   );
                   currentDist.should.be.aboveOrEqual(dist);
                   dist = currentDist;
                 });
                 done();
-              }
+              },
             );
-          }
+          },
         );
       });
     });
 
     it('find should be able to set unit when query location via near', function(done) {
-      var coords = {lat: 30.274085, lng: 120.15507000000002};
+      const coords = {lat: 30.274085, lng: 120.15507000000002};
 
       geoDb.autoupdate(function(err) {
-        var queryLocation = function(
+        const queryLocation = function(
           distance,
           unit,
           distanceInMeter,
-          numOfResult
+          numOfResult,
         ) {
           return function(callback) {
             PostWithLocation.find(
@@ -2538,14 +2803,14 @@ describe('mongodb connector', function() {
                 if (err) return done(err);
                 results.length.should.be.equal(numOfResult);
                 results.forEach(function(result) {
-                  var currentDist = testUtils.getDistanceBetweenPoints(
+                  const currentDist = testUtils.getDistanceBetweenPoints(
                     coords,
-                    result.location
+                    result.location,
                   );
                   currentDist.should.be.belowOrEqual(distanceInMeter / 1000);
                 });
                 callback();
-              }
+              },
             );
           };
         };
@@ -2568,9 +2833,9 @@ describe('mongodb connector', function() {
                 queryLocation(10000, 'radians', 10000, 3),
                 queryLocation(10000, 'degrees', 10000, 3),
               ],
-              done
+              done,
             );
-          }
+          },
         );
       });
     });
@@ -2583,11 +2848,11 @@ describe('mongodb connector', function() {
   it('find should order by id if the order is not set for the query filter', function(done) {
     PostWithStringId.create({id: '2', title: 'c', content: 'CCC'}, function(
       err,
-      post
+      post,
     ) {
       PostWithStringId.create({id: '1', title: 'd', content: 'DDD'}, function(
         err,
-        post
+        post,
       ) {
         PostWithStringId.find(function(err, posts) {
           should.not.exist(err);
@@ -2601,7 +2866,7 @@ describe('mongodb connector', function() {
 
             PostWithStringId.find({limit: 1, offset: 1}, function(
               err,
-              posts
+              posts,
             ) {
               should.not.exist(err);
               posts.length.should.be.equal(1);
@@ -2644,10 +2909,26 @@ describe('mongodb connector', function() {
     Post.create({title: 'd', content: 'DDD'}, function(err, post) {
       Post.create({id: post.id, title: 'd', content: 'DDD'}, function(
         err,
-        post
+        post,
       ) {
         should.exist(err);
         done();
+      });
+    });
+  });
+
+  it('should allow to find using case insensitive index', function(done) {
+    Category.create({title: 'My Category'}, function(err, category1) {
+      if (err) return done(err);
+      Category.create({title: 'MY CATEGORY'}, function(err, category2) {
+        if (err) return done(err);
+
+        Category.find({where: {title: 'my cATEGory'}}, {collation: {locale: 'en', strength: 1}},
+          function(err, categories) {
+            if (err) return done(err);
+            categories.should.have.length(2);
+            done();
+          });
       });
     });
   });
@@ -2666,7 +2947,7 @@ describe('mongodb connector', function() {
     Post.create({title: 'My Post', content: 'Hello'}, function(err, post) {
       Post.find({where: {title: {like: 'm.+st', options: 'i'}}}, function(
         err,
-        posts
+        posts,
       ) {
         should.not.exist(err);
         posts.should.have.property('length', 1);
@@ -2678,7 +2959,7 @@ describe('mongodb connector', function() {
   it('should allow to find using like with renamed columns', function(done) {
     PostWithStringId.create({title: 'My Post', content: 'Hello'}, function(
       err,
-      post
+      post,
     ) {
       PostWithStringIdAndRenamedColumns.find(
         {where: {renamedTitle: {like: 'M.+st'}}},
@@ -2686,7 +2967,7 @@ describe('mongodb connector', function() {
           should.not.exist(err);
           posts.should.have.property('length', 1);
           done();
-        }
+        },
       );
     });
   });
@@ -2697,13 +2978,13 @@ describe('mongodb connector', function() {
       function(err, post) {
         PostWithStringId.find({where: {title: {like: 'M.+st'}}}, function(
           err,
-          posts
+          posts,
         ) {
           should.not.exist(err);
           posts.should.have.property('length', 1);
           done();
         });
-      }
+      },
     );
   });
 
@@ -2715,7 +2996,7 @@ describe('mongodb connector', function() {
           should.not.exist(err);
           posts.should.have.property('length', 1);
           done();
-        }
+        },
       );
     });
   });
@@ -2748,7 +3029,7 @@ describe('mongodb connector', function() {
           should.not.exist(err);
           posts.should.have.property('length', 0);
           done();
-        }
+        },
       );
     });
   });
@@ -2771,7 +3052,7 @@ describe('mongodb connector', function() {
           should.not.exist(err);
           posts.should.have.property('length', 1);
           done();
-        }
+        },
       );
     });
   });
@@ -2784,7 +3065,7 @@ describe('mongodb connector', function() {
           should.not.exist(err);
           posts.should.have.property('length', 0);
           done();
-        }
+        },
       );
     });
   });
@@ -2797,7 +3078,7 @@ describe('mongodb connector', function() {
           should.not.exist(err);
           posts.should.have.property('length', 1);
           done();
-        }
+        },
       );
     });
   });
@@ -2810,7 +3091,7 @@ describe('mongodb connector', function() {
           should.not.exist(err);
           posts.should.have.property('length', 0);
           done();
-        }
+        },
       );
     });
   });
@@ -2823,7 +3104,7 @@ describe('mongodb connector', function() {
           should.not.exist(err);
           posts.should.have.property('length', 1);
           done();
-        }
+        },
       );
     });
   });
@@ -2836,7 +3117,7 @@ describe('mongodb connector', function() {
           should.not.exist(err);
           posts.should.have.property('length', 0);
           done();
-        }
+        },
       );
     });
   });
@@ -2891,9 +3172,9 @@ describe('mongodb connector', function() {
               should.not.exist(err);
               count.should.be.equal(0);
               done();
-            }
+            },
           );
-        }
+        },
       );
     });
   });
@@ -2913,7 +3194,7 @@ describe('mongodb connector', function() {
               count.should.be.equal(1);
               done();
             });
-          }
+          },
         );
       });
     });
@@ -2921,11 +3202,11 @@ describe('mongodb connector', function() {
 
   it(
     'should support where for count (using renamed columns in deep filter ' +
-      'criteria)',
+    'criteria)',
     function(done) {
       PostWithStringId.create({title: 'My Post', content: 'Hello'}, function(
         err,
-        post
+        post,
       ) {
         PostWithStringIdAndRenamedColumns.count(
           {
@@ -2952,12 +3233,12 @@ describe('mongodb connector', function() {
                 should.not.exist(err);
                 count.should.be.equal(0);
                 done();
-              }
+              },
             );
-          }
+          },
         );
       });
-    }
+    },
   );
 
   it('should return info for destroy', function(done) {
@@ -2971,22 +3252,76 @@ describe('mongodb connector', function() {
   });
 
   it('should export the MongoDB function', function() {
-    var module = require('../');
+    const module = require('../');
     module.MongoDB.should.be.an.instanceOf(Function);
   });
 
   it('should export the ObjectID function', function() {
-    var module = require('../');
+    const module = require('../');
     module.ObjectID.should.be.an.instanceOf(Function);
   });
 
   it('should export the generateMongoDBURL function', function() {
-    var module = require('../');
+    const module = require('../');
     module.generateMongoDBURL.should.be.an.instanceOf(Function);
   });
 
+  describe('Test generateMongoDBURL function', function() {
+    const module = require('../');
+    context('should return correct mongodb url ', function() {
+      it('when only passing in database', function() {
+        const options = {
+          database: 'fakeDatabase',
+        };
+        module.generateMongoDBURL(options).should.be.eql('mongodb://127.0.0.1:27017/fakeDatabase');
+      });
+      it('when protocol is mongodb and no username/password', function() {
+        const options = {
+          protocol: 'mongodb',
+          hostname: 'fakeHostname',
+          port: 9999,
+          database: 'fakeDatabase',
+        };
+        module.generateMongoDBURL(options).should.be.eql('mongodb://fakeHostname:9999/fakeDatabase');
+      });
+      it('when protocol is mongodb and has username/password', function() {
+        const options = {
+          protocol: 'mongodb',
+          hostname: 'fakeHostname',
+          port: 9999,
+          database: 'fakeDatabase',
+          username: 'fakeUsername',
+          password: 'fakePassword',
+        };
+        module.generateMongoDBURL(options).should.be.eql('mongodb://fakeUsername:fakePassword@fakeHostname:9999/fakeDatabase');
+      });
+      it('when protocol is mongodb+srv and no username/password', function() {
+        const options = {
+          protocol: 'mongodb+srv',
+          hostname: 'fakeHostname',
+          port: 9999,
+          database: 'fakeDatabase',
+        };
+        // mongodb+srv url should not have the port in it
+        module.generateMongoDBURL(options).should.be.eql('mongodb+srv://fakeHostname/fakeDatabase');
+      });
+      it('when protocol is mongodb+srv and has username/password', function() {
+        const options = {
+          protocol: 'mongodb+srv',
+          hostname: 'fakeHostname',
+          port: 9999,
+          database: 'fakeDatabase',
+          username: 'fakeUsername',
+          password: 'fakePassword',
+        };
+        // mongodb+srv url should not have the port in it
+        module.generateMongoDBURL(options).should.be.eql('mongodb+srv://fakeUsername:fakePassword@fakeHostname/fakeDatabase');
+      });
+    });
+  });
+
   context('fieldsArrayToObj', function() {
-    var fieldsArrayToObj = require('../').fieldsArrayToObj;
+    const fieldsArrayToObj = require('../').fieldsArrayToObj;
     it('should export the fieldsArrayToObj function', function() {
       fieldsArrayToObj.should.be.an.instanceOf(Function);
     });
@@ -3011,7 +3346,7 @@ describe('mongodb connector', function() {
     beforeEach(function createTestFixtures(done) {
       Post.create(
         [{title: 'a', content: 'AAA'}, {title: 'b', content: 'BBB'}],
-        done
+        done,
       );
     });
     after(function deleteTestFixtures(done) {
@@ -3023,7 +3358,7 @@ describe('mongodb connector', function() {
         it('should work', function(done) {
           Post.find({where: {content: {regexp: '^A'}}}, function(
             err,
-            posts
+            posts,
           ) {
             should.not.exist(err);
             posts.length.should.equal(1);
@@ -3044,7 +3379,7 @@ describe('mongodb connector', function() {
         it('should work', function(done) {
           Post.find({where: {content: {regexp: '^a/i'}}}, function(
             err,
-            posts
+            posts,
           ) {
             should.not.exist(err);
             posts.length.should.equal(1);
@@ -3056,7 +3391,7 @@ describe('mongodb connector', function() {
         it('should print a warning when the global flag is set', function(done) {
           Post.find({where: {content: {regexp: '^a/g'}}}, function(
             err,
-            posts
+            posts,
           ) {
             // eslint-disable-next-line
             console.warn.calledOnce.should.be.ok;
@@ -3071,7 +3406,7 @@ describe('mongodb connector', function() {
         it('should work', function(done) {
           Post.find({where: {content: {regexp: /^A/}}}, function(
             err,
-            posts
+            posts,
           ) {
             should.not.exist(err);
             posts.length.should.equal(1);
@@ -3092,7 +3427,7 @@ describe('mongodb connector', function() {
         it('should work', function(done) {
           Post.find({where: {content: {regexp: /^a/i}}}, function(
             err,
-            posts
+            posts,
           ) {
             should.not.exist(err);
             posts.length.should.equal(1);
@@ -3104,7 +3439,7 @@ describe('mongodb connector', function() {
         it('should print a warning when the global flag is set', function(done) {
           Post.find({where: {content: {regexp: /^a/g}}}, function(
             err,
-            posts
+            posts,
           ) {
             // eslint-disable-next-line
             console.warn.calledOnce.should.be.ok;
@@ -3124,7 +3459,7 @@ describe('mongodb connector', function() {
               posts.length.should.equal(1);
               posts[0].content.should.equal('AAA');
               done();
-            }
+            },
           );
         });
       });
@@ -3145,7 +3480,7 @@ describe('mongodb connector', function() {
               posts.length.should.equal(1);
               posts[0].content.should.equal('AAA');
               done();
-            }
+            },
           );
         });
 
@@ -3156,7 +3491,7 @@ describe('mongodb connector', function() {
               // eslint-disable-next-line
               console.warn.calledOnce.should.be.ok;
               done();
-            }
+            },
           );
         });
       });
@@ -3170,7 +3505,7 @@ describe('mongodb connector', function() {
     beforeEach(function createTestFixtures(done) {
       Post.create(
         [{title: 'a', content: 'AAA'}, {title: 'b', content: 'BBB'}],
-        done
+        done,
       );
     });
     after(function deleteTestFixtures(done) {
@@ -3183,7 +3518,7 @@ describe('mongodb connector', function() {
           it('should work', function(done) {
             Post.find({where: {content: {like: '^A'}}}, function(
               err,
-              posts
+              posts,
             ) {
               should.not.exist(err);
               posts.length.should.equal(1);
@@ -3202,7 +3537,7 @@ describe('mongodb connector', function() {
                 posts.length.should.equal(1);
                 posts[0].content.should.equal('AAA');
                 done();
-              }
+              },
             );
           });
         });
@@ -3213,7 +3548,7 @@ describe('mongodb connector', function() {
           it('should work', function(done) {
             Post.find({where: {content: {like: /^A/}}}, function(
               err,
-              posts
+              posts,
             ) {
               should.not.exist(err);
               posts.length.should.equal(1);
@@ -3227,7 +3562,7 @@ describe('mongodb connector', function() {
           it('should work', function(done) {
             Post.find({where: {content: {like: /^a/i}}}, function(
               err,
-              posts
+              posts,
             ) {
               should.not.exist(err);
               posts.length.should.equal(1);
@@ -3248,7 +3583,7 @@ describe('mongodb connector', function() {
                 posts.length.should.equal(1);
                 posts[0].content.should.equal('AAA');
                 done();
-              }
+              },
             );
           });
         });
@@ -3262,7 +3597,7 @@ describe('mongodb connector', function() {
                 posts.length.should.equal(1);
                 posts[0].content.should.equal('AAA');
                 done();
-              }
+              },
             );
           });
         });
@@ -3275,7 +3610,7 @@ describe('mongodb connector', function() {
           it('should work', function(done) {
             Post.find({where: {content: {nlike: '^A'}}}, function(
               err,
-              posts
+              posts,
             ) {
               should.not.exist(err);
               posts.length.should.equal(1);
@@ -3294,7 +3629,7 @@ describe('mongodb connector', function() {
                 posts.length.should.equal(1);
                 posts[0].content.should.equal('BBB');
                 done();
-              }
+              },
             );
           });
         });
@@ -3305,7 +3640,7 @@ describe('mongodb connector', function() {
           it('should work', function(done) {
             Post.find({where: {content: {nlike: /^A/}}}, function(
               err,
-              posts
+              posts,
             ) {
               should.not.exist(err);
               posts.length.should.equal(1);
@@ -3319,7 +3654,7 @@ describe('mongodb connector', function() {
           it('should work', function(done) {
             Post.find({where: {content: {nlike: /^a/i}}}, function(
               err,
-              posts
+              posts,
             ) {
               should.not.exist(err);
               posts.length.should.equal(1);
@@ -3340,7 +3675,7 @@ describe('mongodb connector', function() {
                 posts.length.should.equal(1);
                 posts[0].content.should.equal('BBB');
                 done();
-              }
+              },
             );
           });
         });
@@ -3354,7 +3689,7 @@ describe('mongodb connector', function() {
                 posts.length.should.equal(1);
                 posts[0].content.should.equal('BBB');
                 done();
-              }
+              },
             );
           });
         });

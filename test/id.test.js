@@ -1,4 +1,4 @@
-// Copyright IBM Corp. 2013,2016. All Rights Reserved.
+// Copyright IBM Corp. 2013,2019. All Rights Reserved.
 // Node module: loopback-connector-mongodb-mt
 // This file is licensed under the MIT License.
 // License text available at https://opensource.org/licenses/MIT
@@ -6,10 +6,10 @@
 'use strict';
 
 require('./init.js');
-var ds = global.getDataSource();
+const ds = global.getDataSource();
 
 describe('mongodb custom id name', function() {
-  var Customer = ds.createModel(
+  const Customer = ds.createModel(
     'customer',
     {
       seq: {type: Number, id: true},
@@ -17,7 +17,7 @@ describe('mongodb custom id name', function() {
       emails: [String],
       age: Number,
     },
-    {forceId: false}
+    {forceId: false},
   );
   before(function(done) {
     Customer.deleteAll(done);
@@ -43,9 +43,9 @@ describe('mongodb custom id name', function() {
           function(err, customer) {
             customer.seq.should.equal(2);
             done(err, customer);
-          }
+          },
         );
-      }
+      },
     );
   });
 
@@ -66,7 +66,7 @@ describe('mongodb custom id name', function() {
 });
 
 describe('mongodb string id', function() {
-  var Customer = ds.createModel(
+  const Customer = ds.createModel(
     'customer2',
     {
       seq: {type: String, id: true},
@@ -74,9 +74,9 @@ describe('mongodb string id', function() {
       emails: [String],
       age: Number,
     },
-    {forceId: false}
+    {forceId: false},
   );
-  var customer1, customer2;
+  let customer1, customer2;
 
   before(function(done) {
     Customer.deleteAll(done);
@@ -93,7 +93,7 @@ describe('mongodb string id', function() {
       function(err, customer) {
         customer.seq.should.equal('1');
         customer1 = customer;
-        var customer2Id = new ds.ObjectID().toString();
+        const customer2Id = new ds.ObjectID().toString();
         Customer.create(
           {
             seq: customer2Id,
@@ -105,9 +105,9 @@ describe('mongodb string id', function() {
             customer2 = customer;
             customer.seq.toString().should.eql(customer2Id);
             done(err, customer);
-          }
+          },
         );
-      }
+      },
     );
   });
 
@@ -129,7 +129,7 @@ describe('mongodb string id', function() {
   it('should allow inq with find - test 2', function(done) {
     Customer.find({where: {seq: {inq: [customer2.seq]}}}, function(
       err,
-      customers
+      customers,
     ) {
       customers.length.should.equal(1);
       // seq is now a string
@@ -140,7 +140,7 @@ describe('mongodb string id', function() {
 });
 
 describe('mongodb default id type', function() {
-  var Account = ds.createModel(
+  const Account = ds.createModel(
     'account',
     {
       seq: {id: true, generated: true},
@@ -148,14 +148,14 @@ describe('mongodb default id type', function() {
       emails: [String],
       age: Number,
     },
-    {forceId: false}
+    {forceId: false},
   );
 
   before(function(done) {
     Account.deleteAll(done);
   });
 
-  var id;
+  let id;
   it('should generate id value for create', function(done) {
     Account.create(
       {
@@ -173,7 +173,7 @@ describe('mongodb default id type', function() {
           account.should.have.property('seq');
           done(err, account1);
         });
-      }
+      },
     );
   });
 
@@ -197,10 +197,10 @@ describe('mongodb default id type', function() {
 });
 
 describe('mongodb default id name', function() {
-  var Customer1 = ds.createModel(
+  const Customer1 = ds.createModel(
     'customer1',
     {name: String, emails: [String], age: Number},
-    {forceId: false}
+    {forceId: false},
   );
 
   before(function(done) {
@@ -218,7 +218,7 @@ describe('mongodb default id name', function() {
       function(err, customer) {
         customer.id.should.equal(1);
         done(err, customer);
-      }
+      },
     );
   });
 
@@ -237,13 +237,174 @@ describe('mongodb default id name', function() {
         age: 30,
       },
       function(err, customer) {
-        // console.log(customer);
         customer.should.have.property('id');
         Customer1.findById(customer.id, function(err, customer1) {
           customer1.id.should.eql(customer.id);
           done(err, customer);
         });
-      }
+      },
     );
+  });
+});
+
+describe('strictObjectIDCoercion', function() {
+  const ObjectID = ds.connector.getDefaultIdType();
+  const objectIdLikeString = '7cd2ad46ffc580ba45d3cb1f';
+
+  context('set to false (default)', function() {
+    const User = ds.createModel(
+      'user1',
+      {
+        id: {type: String, id: true},
+        name: String,
+      },
+    );
+
+    beforeEach(function(done) {
+      User.deleteAll(done);
+    });
+
+    it('should coerce to ObjectID', async function() {
+      const user = await User.create({id: objectIdLikeString, name: 'John'});
+      user.id.should.be.an.instanceOf(ds.ObjectID);
+    });
+
+    it('should find model with ObjectID id', async function() {
+      const user = await User.create({name: 'John'});
+      user.id.should.be.an.instanceOf(ds.ObjectID);
+      const found = await User.findById(user.id);
+      found.toObject().name.should.equal('John');
+    });
+
+    it('should find model with ObjectID-like id', async function() {
+      const user = await User.create({id: objectIdLikeString, name: 'John'});
+      user.id.should.be.an.instanceOf(ds.ObjectID);
+      user.id.should.eql(ObjectID(objectIdLikeString));
+      const found = await User.findById(objectIdLikeString);
+      found.toObject().name.should.equal('John');
+    });
+
+    it('should find model with string id', async function() {
+      const user = await User.create({id: 'a', name: 'John'});
+      user.id.should.be.an.instanceOf(String);
+      user.id.should.equal('a');
+      const found = await User.findById('a');
+      found.toObject().name.should.equal('John');
+    });
+  });
+
+  context('set to true', function() {
+    const User = ds.createModel(
+      'user2',
+      {
+        id: {type: String, id: true},
+        name: String,
+      },
+      {strictObjectIDCoercion: true},
+    );
+
+    beforeEach(function(done) {
+      User.deleteAll(done);
+    });
+
+    it('should not coerce to ObjectID', async function() {
+      const user = await User.create({id: objectIdLikeString, name: 'John'});
+      user.id.should.equal(objectIdLikeString);
+    });
+
+    it('should not find model with ObjectID id', async function() {
+      const user = await User.create({name: 'John'});
+      const found = await User.findById(user.id);
+      (found === null).should.be.true();
+    });
+
+    it('should find model with ObjectID-like string id', async function() {
+      const user = await User.create({id: objectIdLikeString, name: 'John'});
+      user.id.should.not.be.an.instanceOf(ds.ObjectID);
+      user.id.should.eql(objectIdLikeString);
+      const found = await User.findById(objectIdLikeString);
+      found.toObject().name.should.equal('John');
+    });
+
+    it('should find model with string id', async function() {
+      const user = await User.create({id: 'a', name: 'John'});
+      user.id.should.be.an.instanceOf(String);
+      user.id.should.equal('a');
+      const found = await User.findById('a');
+      found.toObject().name.should.equal('John');
+    });
+  });
+
+  context('set to true, id type set to ObjectID', function() {
+    const User = ds.createModel(
+      'user3',
+      {
+        id: {type: String, id: true, mongodb: {dataType: 'ObjectID'}},
+        name: String,
+      },
+      {strictObjectIDCoercion: true},
+    );
+
+    const User1 = ds.createModel(
+      'user4',
+      {
+        id: {type: String, id: true, mongodb: {dataType: 'objectid'}},
+        name: String,
+      },
+      {strictObjectIDCoercion: true},
+    );
+
+    beforeEach(function(done) {
+      User.deleteAll();
+      User1.deleteAll(done);
+    });
+
+    it('should coerce to ObjectID', async function() {
+      const user = await User.create({id: objectIdLikeString, name: 'John'});
+      user.id.should.be.an.instanceOf(ds.ObjectID);
+    });
+
+    it('should coerce to ObjectID (lowercase)', async function() {
+      const user = await User1.create({id: objectIdLikeString, name: 'John'});
+      user.id.should.be.an.instanceOf(ds.ObjectID);
+    });
+
+    it('should throw if id is not a ObjectID-like string', async function() {
+      try {
+        await User.create({id: 'abc', name: 'John'});
+      } catch (e) {
+        e.message.should.match(/not an ObjectID string/);
+      }
+    });
+
+    it('should find model with ObjectID id', async function() {
+      const user = await User.create({name: 'John'});
+      user.id.should.be.an.instanceOf(ds.ObjectID);
+      const found = await User.findById(user.id);
+      found.toObject().name.should.equal('John');
+    });
+
+    // This works by coercing string to ObjectID, overriding `strictObjectIDCoercion: true`
+    it('should find model with ObjectID-like id', async function() {
+      const user = await User.create({id: objectIdLikeString, name: 'John'});
+      user.id.should.be.an.instanceOf(ds.ObjectID);
+      user.id.should.eql(ObjectID(objectIdLikeString));
+      const found = await User.findById(objectIdLikeString);
+      found.toObject().name.should.equal('John');
+    });
+
+    it('should update model with ObjectID id', async function() {
+      const user = await User.create({name: 'John'});
+      await User.update({id: user.id, name: 'Jon'});
+      const found = await User.findById(user.id);
+      found.name.should.equal('Jon');
+    });
+
+    it('should update model with ObjectID-like id', async function() {
+      const user = await User.create({id: objectIdLikeString, name: 'John'});
+      await User.update({id: objectIdLikeString, name: 'Jon'});
+      const found = await User.findById(objectIdLikeString);
+      found.name.should.equal('Jon');
+    });
   });
 });
